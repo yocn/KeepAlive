@@ -9,7 +9,7 @@
 #include <binder/IServiceManager.h>
 #include <binder/Parcel.h>
 
-#define TAG        "KeepAlive"
+#define TAG        "KeepAliveNative"
 #define LOGI(...)    __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGD(...)    __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGW(...)    __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
@@ -18,8 +18,11 @@
 #define    DAEMON_CALLBACK_NAME        "onDaemonDead"
 
 using namespace android;
+char pidInfo[1000];
+int pidInfoIndex = 0;
 
 extern "C" {
+
 void set_process_name(JNIEnv *env) {
     jclass process = env->FindClass("android/os/Process");
     jmethodID setArgV0 = env->GetStaticMethodID(process, "setArgV0", "(Ljava/lang/String;)V");
@@ -45,22 +48,22 @@ void notify_and_waitfor(char *observer_self_path, char *observer_daemon_path) {
         observer_daemon_descriptor = open(observer_daemon_path, O_RDONLY);
     }
     remove(observer_daemon_path);
-    LOGE("Watched >>>>OBSERVER<<<< has been ready...");
+    LOGE("pidInfo:%s  Watched >>>>OBSERVER<<<< has been ready...", pidInfo);
 }
 
 
 int lock_file(char *lock_file_path) {
-    LOGD("start try to lock file >> %s <<", lock_file_path);
+    LOGD("pidInfo:%s  start try to lock file >> %s <<", pidInfo, lock_file_path);
     int lockFileDescriptor = open(lock_file_path, O_RDONLY);
     if (lockFileDescriptor == -1) {
         lockFileDescriptor = open(lock_file_path, O_CREAT, S_IRUSR);
     }
     int lockRet = flock(lockFileDescriptor, LOCK_EX);
     if (lockRet == -1) {
-        LOGE("lock file failed >> %s <<", lock_file_path);
+        LOGE("pidInfo:%s  lock file failed >> %s <<", pidInfo, lock_file_path);
         return 0;
     } else {
-        LOGD("lock file success  >> %s <<", lock_file_path);
+        LOGD("pidInfo:%s  lock file success  >> %s <<", pidInfo, lock_file_path);
         return 1;
     }
 }
@@ -74,15 +77,21 @@ void java_callback(JNIEnv *env, jobject jobj, char *method_name) {
 void do_daemon(JNIEnv *env, jobject jobj, char *indicator_self_path, char *indicator_daemon_path,
                char *observer_self_path, char *observer_daemon_path, int code,
                const uint8_t *data, size_t data_size) {
+    int pid = getpid();
+    pidInfoIndex = sprintf(pidInfo, "%d", pid);
+    LOGD("pidInfoIndex:%d ", pidInfoIndex);
+    pidInfo[pidInfoIndex] = ':';
+
     int lock_status = 0;
     int try_time = 0;
     while (try_time < 3 && !(lock_status = lock_file(indicator_self_path))) {
         try_time++;
-        LOGD("Persistent lock myself failed and try again as %d times", try_time);
+        LOGD("pidInfo:%s  Persistent lock myself failed and try again as %d times", pidInfo,
+             try_time);
         usleep(10000);
     }
     if (!lock_status) {
-        LOGE("Persistent lock myself failed and exit");
+        LOGE("pidInfo:%s  Persistent lock myself failed and exit", pidInfo);
         return;
     }
 
@@ -93,12 +102,10 @@ void do_daemon(JNIEnv *env, jobject jobj, char *indicator_self_path, char *indic
     Parcel parcel;
     parcel.setData(data, data_size);
 
-    int pid = getpid();
-
-    LOGD("Watch >>>>to lock_file<<<<< !!");
+    LOGD("pidInfo:%s  Watch >>>>to lock_file<<<<< !!", pidInfo);
     lock_status = lock_file(indicator_daemon_path);
     if (lock_status) {
-        LOGE("Watch >>>>DAEMON<<<<< Daed !!");
+        LOGE("pidInfo:%s  Watch >>>>DAEMON<<<<< Daed !!", pidInfo);
         int result = binder.get()->transact(code, parcel, NULL, 0);
         remove(observer_self_path);// it`s important ! to prevent from deadlock
 //        java_callback(env, jobj, DAEMON_CALLBACK_NAME);
@@ -110,11 +117,11 @@ void do_daemon(JNIEnv *env, jobject jobj, char *indicator_self_path, char *indic
 
 JNIEXPORT void JNICALL
 Java_com_boolbird_keepalive_NativeKeepAlive_doDaemon(JNIEnv *env, jobject jobj,
-                                                             jstring indicatorSelfPath,
-                                                             jstring indicatorDaemonPath,
-                                                             jstring observerSelfPath,
-                                                             jstring observerDaemonPath,
-                                                             jint code, jlong parcel_ptr) {
+                                                     jstring indicatorSelfPath,
+                                                     jstring indicatorDaemonPath,
+                                                     jstring observerSelfPath,
+                                                     jstring observerDaemonPath,
+                                                     jint code, jlong parcel_ptr) {
     if (indicatorSelfPath == NULL || indicatorDaemonPath == NULL || observerSelfPath == NULL ||
         observerDaemonPath == NULL) {
         LOGE("parameters cannot be NULL !");
